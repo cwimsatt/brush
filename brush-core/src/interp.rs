@@ -1760,7 +1760,7 @@ pub(crate) async fn setup_redirect(
     redirect: &ast::IoRedirect,
 ) -> Result<(), error::Error> {
     match redirect {
-        ast::IoRedirect::OutputAndError(f, append) => {
+        ast::IoRedirect::OutputAndError(f, append, ..) => {
             let mut expanded_fields =
                 expansion::full_expand_and_split_word(shell, params, f).await?;
             if expanded_fields.len() != 1 {
@@ -1771,7 +1771,7 @@ pub(crate) async fn setup_redirect(
             setup_redirect_output_and_error_to(shell, params, &expanded_file_path, *append)?;
         }
 
-        ast::IoRedirect::File(specified_fd_num, kind, target) => {
+        ast::IoRedirect::File(specified_fd_num, kind, target, ..) => {
             match target {
                 ast::IoFileRedirectTarget::Filename(f) => {
                     let mut options = std::fs::File::options();
@@ -1949,7 +1949,7 @@ pub(crate) async fn setup_redirect(
             }
         }
 
-        ast::IoRedirect::HereDocument(fd_num, io_here) => {
+        ast::IoRedirect::HereDocument(fd_num, io_here, ..) => {
             // If not specified, default to stdin (fd 0).
             let fd_num = fd_num.unwrap_or(0);
 
@@ -1965,7 +1965,7 @@ pub(crate) async fn setup_redirect(
             params.open_files.set_fd(fd_num, f);
         }
 
-        ast::IoRedirect::HereString(fd_num, word) => {
+        ast::IoRedirect::HereString(fd_num, word, ..) => {
             // If not specified, default to stdin (fd 0).
             let fd_num = fd_num.unwrap_or(0);
 

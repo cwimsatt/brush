@@ -556,24 +556,24 @@ peg::parser! {
         // N.B. here strings are extensions to the POSIX standard.
         rule io_redirect() -> ast::IoRedirect =
             n:io_number()? f:io_file() {
-                    let (kind, target) = f;
-                    ast::IoRedirect::File(n, kind, target)
+                    let (kind, target, op_loc) = f;
+                    ast::IoRedirect::File(n, kind, target, Some(op_loc))
                 } /
-            non_posix_extensions_enabled() specific_operator("&>>") target:filename() { ast::IoRedirect::OutputAndError(ast::Word::from(target), true) } /
-            non_posix_extensions_enabled() specific_operator("&>") target:filename() { ast::IoRedirect::OutputAndError(ast::Word::from(target), false) } /
-            non_posix_extensions_enabled() n:io_number()? specific_operator("<<<") w:word() { ast::IoRedirect::HereString(n, ast::Word::from(w)) } /
-            n:io_number()? h:io_here() { ast::IoRedirect::HereDocument(n, h) } /
+            non_posix_extensions_enabled() op:specific_operator("&>>") target:filename() { ast::IoRedirect::OutputAndError(ast::Word::from(target), true, Some(op.location().clone())) } /
+            non_posix_extensions_enabled() op:specific_operator("&>") target:filename() { ast::IoRedirect::OutputAndError(ast::Word::from(target), false, Some(op.location().clone())) } /
+            non_posix_extensions_enabled() n:io_number()? op:specific_operator("<<<") w:word() { ast::IoRedirect::HereString(n, ast::Word::from(w), Some(op.location().clone())) } /
+            n:io_number()? h:io_here() { let (hd, op_loc) = h; ast::IoRedirect::HereDocument(n, hd, Some(op_loc)) } /
             expected!("I/O redirect")
 
         // N.B. Process substitution forms are extensions to the POSIX standard.
-        rule io_file() -> (ast::IoFileRedirectKind, ast::IoFileRedirectTarget) =
-            specific_operator("<")  f:io_filename() { (ast::IoFileRedirectKind::Read, f) } /
-            specific_operator("<&") f:io_fd_duplication_source() { (ast::IoFileRedirectKind::DuplicateInput, f) } /
-            specific_operator(">")  f:io_filename() { (ast::IoFileRedirectKind::Write, f) } /
-            specific_operator(">&") f:io_fd_duplication_source() { (ast::IoFileRedirectKind::DuplicateOutput, f) } /
-            specific_operator(">>") f:io_filename() { (ast::IoFileRedirectKind::Append, f) } /
-            specific_operator("<>") f:io_filename() { (ast::IoFileRedirectKind::ReadAndWrite, f) } /
-            specific_operator(">|") f:io_filename() { (ast::IoFileRedirectKind::Clobber, f) }
+        rule io_file() -> (ast::IoFileRedirectKind, ast::IoFileRedirectTarget, crate::SourceSpan) =
+            op:specific_operator("<")  f:io_filename() { (ast::IoFileRedirectKind::Read, f, op.location().clone()) } /
+            op:specific_operator("<&") f:io_fd_duplication_source() { (ast::IoFileRedirectKind::DuplicateInput, f, op.location().clone()) } /
+            op:specific_operator(">")  f:io_filename() { (ast::IoFileRedirectKind::Write, f, op.location().clone()) } /
+            op:specific_operator(">&") f:io_fd_duplication_source() { (ast::IoFileRedirectKind::DuplicateOutput, f, op.location().clone()) } /
+            op:specific_operator(">>") f:io_filename() { (ast::IoFileRedirectKind::Append, f, op.location().clone()) } /
+            op:specific_operator("<>") f:io_filename() { (ast::IoFileRedirectKind::ReadAndWrite, f, op.location().clone()) } /
+            op:specific_operator(">|") f:io_filename() { (ast::IoFileRedirectKind::Clobber, f, op.location().clone()) }
 
         rule io_fd_duplication_source() -> ast::IoFileRedirectTarget =
             w:word() { ast::IoFileRedirectTarget::Duplicate(ast::Word::from(w)) }
@@ -591,24 +591,24 @@ peg::parser! {
         rule filename() -> &'input Token =
             word()
 
-        pub(crate) rule io_here() -> ast::IoHereDocument =
-           specific_operator("<<-") here_tag:here_tag() doc:[_] closing_tag:here_tag() {
+        pub(crate) rule io_here() -> (ast::IoHereDocument, crate::SourceSpan) =
+           op:specific_operator("<<-") here_tag:here_tag() doc:[_] closing_tag:here_tag() {
                 let requires_expansion = !here_tag.to_str().contains(['\'', '"', '\\']);
-                ast::IoHereDocument {
+                (ast::IoHereDocument {
                     remove_tabs: true,
                     requires_expansion,
                     here_end: ast::Word::from(here_tag),
                     doc: ast::Word::from(doc)
-                }
+                }, op.location().clone())
             } /
-            specific_operator("<<") here_tag:here_tag() doc:[_] closing_tag:here_tag() {
+            op:specific_operator("<<") here_tag:here_tag() doc:[_] closing_tag:here_tag() {
                 let requires_expansion = !here_tag.to_str().contains(['\'', '"', '\\']);
-                ast::IoHereDocument {
+                (ast::IoHereDocument {
                     remove_tabs: false,
                     requires_expansion,
                     here_end: ast::Word::from(here_tag),
                     doc: ast::Word::from(doc)
-                }
+                }, op.location().clone())
             }
 
         rule here_tag() -> &'input Token =
@@ -767,6 +767,8 @@ fn add_pipe_extension_redirection(c: &mut ast::Command) {
         Some(2),
         ast::IoFileRedirectKind::DuplicateOutput,
         ast::IoFileRedirectTarget::Fd(1),
+        // Synthesized `2>&1`; no operator token in the source.
+        None,
     );
 
     match c {

@@ -1537,50 +1537,67 @@ pub type IoFd = i32;
     derive(PartialEq, Eq, serde::Serialize, serde::Deserialize)
 )]
 pub enum IoRedirect {
-    /// Redirection to a file.
-    File(Option<IoFd>, IoFileRedirectKind, IoFileRedirectTarget),
-    /// Redirection from a here-document.
-    HereDocument(Option<IoFd>, IoHereDocument),
-    /// Redirection from a here-string.
-    HereString(Option<IoFd>, Word),
-    /// Redirection of both standard output and standard error (with optional append).
-    OutputAndError(Word, bool),
+    /// Redirection to a file. The final field is the source span of the
+    /// redirection operator, when known.
+    File(
+        Option<IoFd>,
+        IoFileRedirectKind,
+        IoFileRedirectTarget,
+        Option<SourceSpan>,
+    ),
+    /// Redirection from a here-document. The final field is the source span of
+    /// the `<<` / `<<-` operator, when known.
+    HereDocument(Option<IoFd>, IoHereDocument, Option<SourceSpan>),
+    /// Redirection from a here-string. The final field is the source span of the
+    /// `<<<` operator, when known.
+    HereString(Option<IoFd>, Word, Option<SourceSpan>),
+    /// Redirection of both standard output and standard error (with optional
+    /// append). The final field is the source span of the `&>` / `&>>` operator,
+    /// when known.
+    OutputAndError(Word, bool, Option<SourceSpan>),
 }
 
 impl Node for IoRedirect {}
 
 impl SourceLocation for IoRedirect {
     fn location(&self) -> Option<SourceSpan> {
-        // TODO(source-location): complete
-        None
+        // The location of a redirection is the span of its operator (`>`, `>>`,
+        // `<`, `<<`, `<<<`, `&>`, ...), captured by the grammar. The operand
+        // (target / here-document body) is not included.
+        match self {
+            Self::File(_, _, _, loc)
+            | Self::HereDocument(_, _, loc)
+            | Self::HereString(_, _, loc)
+            | Self::OutputAndError(_, _, loc) => loc.clone(),
+        }
     }
 }
 
 impl Display for IoRedirect {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::File(fd_num, kind, target) => {
+            Self::File(fd_num, kind, target, ..) => {
                 if let Some(fd_num) = fd_num {
                     write!(f, "{fd_num}")?;
                 }
 
                 write!(f, "{kind} {target}")?;
             }
-            Self::OutputAndError(target, append) => {
+            Self::OutputAndError(target, append, ..) => {
                 write!(f, "&>")?;
                 if *append {
                     write!(f, ">")?;
                 }
                 write!(f, " {target}")?;
             }
-            Self::HereDocument(fd_num, here_doc) => {
+            Self::HereDocument(fd_num, here_doc, ..) => {
                 if let Some(fd_num) = fd_num {
                     write!(f, "{fd_num}")?;
                 }
 
                 write!(f, "<<{here_doc}")?;
             }
-            Self::HereString(fd_num, s) => {
+            Self::HereString(fd_num, s, ..) => {
                 if let Some(fd_num) = fd_num {
                     write!(f, "{fd_num}")?;
                 }
