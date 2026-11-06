@@ -2513,13 +2513,10 @@ my_func
     }
 
     fn find_redirect(cmd: &SimpleCommand) -> Option<&IoRedirect> {
-        let suffix = cmd.suffix.as_ref()?;
-        for item in &suffix.0 {
-            if let CommandPrefixOrSuffixItem::IoRedirect(redirect) = item {
-                return Some(redirect);
-            }
-        }
-        None
+        cmd.suffix.as_ref()?.0.iter().find_map(|item| match item {
+            CommandPrefixOrSuffixItem::IoRedirect(redirect) => Some(redirect),
+            _ => None,
+        })
     }
 
     fn brace_word_end_and_operator_start(input: &str) -> (usize, usize) {
@@ -2560,7 +2557,9 @@ my_func
         };
 
         let redirect = find_redirect(cmd).expect("expected an I/O redirect");
-        let loc = redirect.location().expect("the > operator should have a span");
+        let loc = redirect
+            .location()
+            .expect("the > operator should have a span");
 
         assert_eq!(
             *(loc.start),
