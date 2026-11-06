@@ -2524,24 +2524,24 @@ my_func
         let Command::Simple(cmd) = &program.complete_commands[0].0[0].0.first.seq[0] else {
             panic!("expected simple command");
         };
-        let suffix = cmd.suffix.as_ref().expect("expected a suffix");
+        let suffix = cmd.suffix.as_ref().unwrap();
 
         let mut word_end = None;
         let mut operator_start = None;
         for item in &suffix.0 {
             match item {
                 CommandPrefixOrSuffixItem::Word(w) if w.value == "{fd}" => {
-                    word_end = Some(w.loc.as_ref().expect("brace word span").end.index);
+                    word_end = Some(w.loc.as_ref().unwrap().end.index);
                 }
                 CommandPrefixOrSuffixItem::IoRedirect(redirect) => {
-                    operator_start = Some(redirect.location().expect("operator span").start.index);
+                    operator_start = Some(redirect.location().unwrap().start.index);
                 }
                 _ => {}
             }
         }
 
-        let word_end = word_end.expect("expected a {fd} word");
-        let operator_start = operator_start.expect("expected a redirect");
+        let word_end = word_end.unwrap();
+        let operator_start = operator_start.unwrap();
         (word_end, operator_start)
     }
 
@@ -2556,10 +2556,8 @@ my_func
             panic!("expected simple command");
         };
 
-        let redirect = find_redirect(cmd).expect("expected an I/O redirect");
-        let loc = redirect
-            .location()
-            .expect("the > operator should have a span");
+        let redirect = find_redirect(cmd).unwrap();
+        let loc = redirect.location().unwrap();
 
         assert_eq!(
             *(loc.start),
@@ -2610,7 +2608,7 @@ my_func
             let Command::Simple(cmd) = &program.complete_commands[0].0[0].0.first.seq[0] else {
                 panic!("expected simple command for {input:?}");
             };
-            let redirect = find_redirect(cmd).expect("expected a redirect");
+            let redirect = find_redirect(cmd).unwrap();
             assert!(redirect.location().is_some(), "missing operator location");
         }
     }
