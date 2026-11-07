@@ -959,6 +959,7 @@ fn try_unwrap_bare_input_redir_program(program: &ast::Program) -> Option<&ast::I
             fd,
             ast::IoFileRedirectKind::Read,
             ast::IoFileRedirectTarget::Filename(..),
+            ..,
         ) if fd.is_none_or(|fd| fd == openfiles::OpenFiles::STDIN_FD) => Some(redir),
         _ => None,
     }

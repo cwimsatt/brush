@@ -1537,50 +1537,79 @@ pub type IoFd = i32;
     derive(PartialEq, Eq, serde::Serialize, serde::Deserialize)
 )]
 pub enum IoRedirect {
-    /// Redirection to a file.
-    File(Option<IoFd>, IoFileRedirectKind, IoFileRedirectTarget),
-    /// Redirection from a here-document.
-    HereDocument(Option<IoFd>, IoHereDocument),
-    /// Redirection from a here-string.
-    HereString(Option<IoFd>, Word),
-    /// Redirection of both standard output and standard error (with optional append).
-    OutputAndError(Word, bool),
+    /// Redirection to a file. The final field is the source span of the
+    /// redirection operator, when known.
+    File(
+        Option<IoFd>,
+        IoFileRedirectKind,
+        IoFileRedirectTarget,
+        #[cfg_attr(any(test, feature = "serde"), serde(skip))] Option<SourceSpan>,
+    ),
+    /// Redirection from a here-document. The final field is the source span of
+    /// the `<<` / `<<-` operator, when known.
+    HereDocument(
+        Option<IoFd>,
+        IoHereDocument,
+        #[cfg_attr(any(test, feature = "serde"), serde(skip))] Option<SourceSpan>,
+    ),
+    /// Redirection from a here-string. The final field is the source span of the
+    /// `<<<` operator, when known.
+    HereString(
+        Option<IoFd>,
+        Word,
+        #[cfg_attr(any(test, feature = "serde"), serde(skip))] Option<SourceSpan>,
+    ),
+    /// Redirection of both standard output and standard error (with optional
+    /// append). The final field is the source span of the `&>` / `&>>` operator,
+    /// when known.
+    OutputAndError(
+        Word,
+        bool,
+        #[cfg_attr(any(test, feature = "serde"), serde(skip))] Option<SourceSpan>,
+    ),
 }
 
 impl Node for IoRedirect {}
 
 impl SourceLocation for IoRedirect {
     fn location(&self) -> Option<SourceSpan> {
-        // TODO(source-location): complete
-        None
+        // The location of a redirection is the span of its operator (`>`, `>>`,
+        // `<`, `<<`, `<<<`, `&>`, ...), captured by the grammar. The operand
+        // (target / here-document body) is not included.
+        match self {
+            Self::File(_, _, _, loc)
+            | Self::HereDocument(_, _, loc)
+            | Self::HereString(_, _, loc)
+            | Self::OutputAndError(_, _, loc) => loc.clone(),
+        }
     }
 }
 
 impl Display for IoRedirect {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::File(fd_num, kind, target) => {
+            Self::File(fd_num, kind, target, ..) => {
                 if let Some(fd_num) = fd_num {
                     write!(f, "{fd_num}")?;
                 }
 
                 write!(f, "{kind} {target}")?;
             }
-            Self::OutputAndError(target, append) => {
+            Self::OutputAndError(target, append, ..) => {
                 write!(f, "&>")?;
                 if *append {
                     write!(f, ">")?;
                 }
                 write!(f, " {target}")?;
             }
-            Self::HereDocument(fd_num, here_doc) => {
+            Self::HereDocument(fd_num, here_doc, ..) => {
                 if let Some(fd_num) = fd_num {
                     write!(f, "{fd_num}")?;
                 }
 
                 write!(f, "<<{here_doc}")?;
             }
-            Self::HereString(fd_num, s) => {
+            Self::HereString(fd_num, s, ..) => {
                 if let Some(fd_num) = fd_num {
                     write!(f, "{fd_num}")?;
                 }
@@ -2481,5 +2510,106 @@ my_func
                 index: 27
             }
         );
+    }
+
+    fn find_redirect(cmd: &SimpleCommand) -> Option<&IoRedirect> {
+        cmd.suffix.as_ref()?.0.iter().find_map(|item| match item {
+            CommandPrefixOrSuffixItem::IoRedirect(redirect) => Some(redirect),
+            _ => None,
+        })
+    }
+
+    fn brace_word_end_and_operator_start(input: &str) -> (usize, usize) {
+        let program = parse(input);
+        let Command::Simple(cmd) = &program.complete_commands[0].0[0].0.first.seq[0] else {
+            panic!("expected simple command");
+        };
+        let suffix = cmd.suffix.as_ref().unwrap();
+
+        let mut word_end = None;
+        let mut operator_start = None;
+        for item in &suffix.0 {
+            match item {
+                CommandPrefixOrSuffixItem::Word(w) if w.value == "{fd}" => {
+                    word_end = Some(w.loc.as_ref().unwrap().end.index);
+                }
+                CommandPrefixOrSuffixItem::IoRedirect(redirect) => {
+                    operator_start = Some(redirect.location().unwrap().start.index);
+                }
+                _ => {}
+            }
+        }
+
+        let word_end = word_end.unwrap();
+        let operator_start = operator_start.unwrap();
+        (word_end, operator_start)
+    }
+
+    #[test]
+    fn io_redirect_operator_loc() {
+        // The redirection's location is the span of its operator (`>`), not its target.
+        const INPUT: &str = "echo hi > out.txt\n";
+
+        let program = parse(INPUT);
+
+        let Command::Simple(cmd) = &program.complete_commands[0].0[0].0.first.seq[0] else {
+            panic!("expected simple command");
+        };
+
+        let redirect = find_redirect(cmd).unwrap();
+        let loc = redirect.location().unwrap();
+
+        assert_eq!(
+            *(loc.start),
+            SourcePosition {
+                line: 1,
+                column: 9,
+                index: 8
+            }
+        );
+        assert_eq!(
+            *(loc.end),
+            SourcePosition {
+                line: 1,
+                column: 10,
+                index: 9
+            }
+        );
+    }
+
+    #[test]
+    fn fd_var_adjacency_is_observable_via_the_operator_span() {
+        // Recording the operator span is what lets a consumer tell a variable-named
+        // file-descriptor allocation `{fd}>file` (no space) from a `{fd}` argument
+        // then a separate redirect `{fd} >file`: only the first has the operator's
+        // start contiguous with the brace word's end.
+
+        // Adjacent: the brace word's end meets the operator's start.
+        let (word_end, operator_start) = brace_word_end_and_operator_start("exec {fd}>out.txt\n");
+        assert_eq!(word_end, operator_start);
+
+        // Spaced: a gap separates them.
+        let (word_end, operator_start) = brace_word_end_and_operator_start("exec {fd} >out.txt\n");
+        assert!(word_end < operator_start);
+    }
+
+    #[test]
+    fn every_redirect_variant_records_its_operator_location() {
+        // File (append), here-string, combined output-and-error, and here-document
+        // all carry the operator span.
+        let inputs = [
+            "echo x >> log.txt\n",
+            "cat <<< hi\n",
+            "cmd &> out.txt\n",
+            "cat << EOF\nbody\nEOF\n",
+        ];
+        for input in inputs {
+            let program = parse(input);
+            let Command::Simple(cmd) = &program.complete_commands[0].0[0].0.first.seq[0] else {
+                panic!("expected simple command for {input:?}");
+            };
+            let redirect = find_redirect(cmd).unwrap();
+            assert!(redirect.location().is_some(), "missing operator location");
+        }
     }
 }
